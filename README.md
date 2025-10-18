@@ -5,6 +5,11 @@ A simple iOS app for organizing books into shelves, using Supabase as the backen
 
 ---
 
+## Supabase Configuration
+Create `Library/Library/Config.swift` from the provided `Config.example.swift` template and supply your Supabase project URL and anon key. Keep the real config file out of source control.
+
+---
+
 ## Data Model
 
 ### Database Schema (PostgreSQL/Supabase)
