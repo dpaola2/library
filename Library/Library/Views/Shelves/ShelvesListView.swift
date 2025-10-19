@@ -14,53 +14,54 @@ struct ShelvesListView: View {
 
     var body: some View {
         NavigationStack {
-            Group {
+            List {
+                ForEach(shelves) { shelf in
+                    NavigationLink {
+                        ShelfDetailView(
+                            shelf: shelf,
+                            onShelfUpdated: { updatedName in
+                                if let index = shelves.firstIndex(where: { $0.id == shelf.id }) {
+                                    shelves[index].name = updatedName
+                                }
+                            }
+                        )
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: "books.vertical")
+                                .foregroundStyle(.tint)
+                            Text(shelf.name)
+                                .font(.headline)
+                        }
+                    }
+                    .swipeActions {
+                        Button("Edit") {
+                            shelfToEdit = shelf
+                        }
+                        .tint(.blue)
+
+                        Button("Delete", role: .destructive) {
+                            shelfToDelete = shelf
+                            showDeleteConfirmation = true
+                        }
+                    }
+                }
+            }
+            .listStyle(.plain)
+            .overlay {
                 if isLoading && shelves.isEmpty {
                     ProgressView("Loading Shelves…")
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                        .allowsHitTesting(false)
                 } else if shelves.isEmpty {
                     ContentUnavailableView(
                         "No Shelves Yet",
                         systemImage: "books.vertical",
                         description: Text("Create your first shelf to start organizing your books.")
                     )
-                } else {
-                    List {
-                        ForEach(shelves) { shelf in
-                            NavigationLink {
-                                ShelfDetailView(
-                                    shelf: shelf,
-                                    onShelfUpdated: { updatedName in
-                                        if let index = shelves.firstIndex(where: { $0.id == shelf.id }) {
-                                            shelves[index].name = updatedName
-                                        }
-                                    }
-                                )
-                            } label: {
-                                HStack(spacing: 12) {
-                                    Image(systemName: "books.vertical")
-                                        .foregroundStyle(.tint)
-                                    Text(shelf.name)
-                                        .font(.headline)
-                                }
-                            }
-                            .swipeActions {
-                                Button("Edit") {
-                                    shelfToEdit = shelf
-                                }
-                                .tint(.blue)
-
-                                Button("Delete", role: .destructive) {
-                                    shelfToDelete = shelf
-                                    showDeleteConfirmation = true
-                                }
-                            }
-                        }
-                    }
-                    .refreshable {
-                        await loadShelves()
-                    }
+                    .allowsHitTesting(false)
                 }
+            }
+            .refreshable {
+                await loadShelves()
             }
             .navigationTitle("My Shelves")
             .toolbar {
