@@ -13,6 +13,10 @@ struct ShelfDetailView: View {
     @State private var showDeleteConfirmation = false
     @State private var errorMessage: String?
     @State private var showError = false
+    @State private var showScanner = false
+    @State private var showBookPreview = false
+    @State private var scannedBookData: BookLookupResult?
+    @State private var isLookingUpISBN = false
 
     let onShelfUpdated: ((String) -> Void)?
 
@@ -85,6 +89,12 @@ struct ShelfDetailView: View {
                     }
 
                     Button {
+                        showScanner = true
+                    } label: {
+                        Label("Scan ISBN", systemImage: "barcode.viewfinder")
+                    }
+
+                    Button {
                         showEditShelf = true
                     } label: {
                         Label("Edit Shelf", systemImage: "pencil")
@@ -115,6 +125,31 @@ struct ShelfDetailView: View {
                 Task { await loadData() }
             }
         }
+        .sheet(isPresented: $showScanner) {
+            ISBNScannerView { isbn in
+                Task {
+                    await handleScannedISBN(isbn)
+                }
+            }
+        }
+        .sheet(isPresented: $showBookPreview) {
+            if let bookData = scannedBookData {
+                BookPreviewView(
+                    bookData: bookData,
+                    shelves: shelves,
+                    defaultShelfId: shelf.id,
+                    onConfirm: { title, author, shelfId in
+                        Task {
+                            await saveScannedBook(title: title, author: author, shelfId: shelfId)
+                        }
+                    },
+                    onCancel: {
+                        showBookPreview = false
+                        scannedBookData = nil
+                    }
+                )
+            }
+        }
         .confirmationDialog(
             "Delete Book?",
             isPresented: $showDeleteConfirmation,
@@ -132,8 +167,68 @@ struct ShelfDetailView: View {
             Text(errorMessage ?? "An unexpected error occurred.")
         }
         .overlay {
-            if isLoading && books.isEmpty {
-                ProgressView("Loading Books…")
+            ZStack {
+                if isLoading && books.isEmpty {
+                    ProgressView("Loading Books…")
+                        .allowsHitTesting(false)
+                }
+
+                if isLookingUpISBN {
+                    Color.black.opacity(0.35)
+                        .ignoresSafeArea()
+                        .allowsHitTesting(false)
+
+                    ProgressView("Looking up ISBN…")
+                        .padding()
+                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .allowsHitTesting(false)
+                }
+            }
+        }
+    }
+
+    private func handleScannedISBN(_ isbn: String) async {
+        await MainActor.run {
+            isLookingUpISBN = true
+        }
+
+        do {
+            let bookData = try await ISBNService.shared.lookupBook(isbn: isbn)
+            guard !shelves.isEmpty else {
+                await MainActor.run {
+                    isLookingUpISBN = false
+                    errorMessage = "Please create a shelf before adding scanned books."
+                    showError = true
+                }
+                return
+            }
+
+            await MainActor.run {
+                scannedBookData = bookData
+                showBookPreview = true
+                isLookingUpISBN = false
+            }
+        } catch {
+            await MainActor.run {
+                isLookingUpISBN = false
+                errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                showError = true
+            }
+        }
+    }
+
+    private func saveScannedBook(title: String, author: String?, shelfId: UUID) async {
+        do {
+            _ = try await supabase.createBook(title: title, author: author, shelfId: shelfId)
+            await MainActor.run {
+                showBookPreview = false
+                scannedBookData = nil
+            }
+            await loadBooks()
+        } catch {
+            await MainActor.run {
+                errorMessage = error.localizedDescription
+                showError = true
             }
         }
     }
