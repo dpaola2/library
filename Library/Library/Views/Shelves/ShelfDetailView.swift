@@ -17,6 +17,7 @@ struct ShelfDetailView: View {
     @State private var showBookPreview = false
     @State private var scannedBookData: BookLookupResult?
     @State private var isLookingUpISBN = false
+    @State private var isFABExpanded = false
 
     let onShelfUpdated: ((String) -> Void)?
 
@@ -29,57 +30,40 @@ struct ShelfDetailView: View {
     }
 
     var body: some View {
-        List {
-            if books.isEmpty && !isLoading {
-                ContentUnavailableView(
-                    "No Books Yet",
-                    systemImage: "book.closed",
-                    description: Text("Add your first book to this shelf.")
-                )
-                .listRowSeparator(.hidden)
-                .frame(maxWidth: .infinity, alignment: .center)
-            } else {
-                ForEach(books) { book in
-                    NavigationLink {
-                        BookDetailView(
-                            book: book,
-                            shelves: shelves,
-                            onUpdate: { updatedBook in
-                                if let index = books.firstIndex(where: { $0.id == updatedBook.id }) {
-                                    books[index] = updatedBook
-                                } else {
-                                    books.append(updatedBook)
-                                }
-                                Task { await reloadShelvesIfNeeded() }
-                            },
-                            onDelete: { deletedBook in
-                                books.removeAll { $0.id == deletedBook.id }
-                            }
-                        )
-                    } label: {
-                        HStack(spacing: 12) {
-                            BookCoverThumbnailView(coverURL: book.coverURL)
+        ZStack {
+            listContent
+                .zIndex(0)
 
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(book.title)
-                                    .font(.headline)
-                                if let author = book.author, !author.isEmpty {
-                                    Text(author)
-                                        .font(.subheadline)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                            .padding(.vertical, 6)
+            if isFABExpanded {
+                Color.black.opacity(0.2)
+                    .ignoresSafeArea()
+                    .transition(.opacity)
+                    .onTapGesture {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                            isFABExpanded = false
                         }
                     }
-                    .swipeActions {
-                        Button("Delete", role: .destructive) {
-                            bookToDelete = book
-                            showDeleteConfirmation = true
+                    .zIndex(1)
+            }
+
+            VStack {
+                Spacer()
+                HStack {
+                    Spacer()
+                    ExpandableFAB(
+                        isExpanded: $isFABExpanded,
+                        onScanISBN: {
+                            showScanner = true
+                        },
+                        onAddBook: {
+                            showAddBook = true
                         }
-                    }
+                    )
                 }
             }
+            .padding(.trailing, 16)
+            .padding(.bottom, 24)
+            .zIndex(2)
         }
         .navigationTitle(shelf.name)
         .navigationBarTitleDisplayMode(.inline)
@@ -87,18 +71,27 @@ struct ShelfDetailView: View {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
                     Button {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                            isFABExpanded = false
+                        }
                         showAddBook = true
                     } label: {
                         Label("Add Book", systemImage: "plus")
                     }
 
                     Button {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                            isFABExpanded = false
+                        }
                         showScanner = true
                     } label: {
                         Label("Scan ISBN", systemImage: "barcode.viewfinder")
                     }
 
                     Button {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                            isFABExpanded = false
+                        }
                         showEditShelf = true
                     } label: {
                         Label("Edit Shelf", systemImage: "pencil")
@@ -107,12 +100,6 @@ struct ShelfDetailView: View {
                     Image(systemName: "ellipsis.circle")
                 }
             }
-        }
-        .task {
-            await loadData()
-        }
-        .refreshable {
-            await loadData()
         }
         .sheet(isPresented: $showAddBook) {
             AddBookView(
@@ -170,6 +157,69 @@ struct ShelfDetailView: View {
         } message: {
             Text(errorMessage ?? "An unexpected error occurred.")
         }
+    }
+
+    @ViewBuilder
+    private var listContent: some View {
+        List {
+            if books.isEmpty && !isLoading {
+                ContentUnavailableView(
+                    "No Books Yet",
+                    systemImage: "book.closed",
+                    description: Text("Add your first book to this shelf.")
+                )
+                .listRowSeparator(.hidden)
+                .frame(maxWidth: .infinity, alignment: .center)
+            } else {
+                ForEach(books) { book in
+                    NavigationLink {
+                        BookDetailView(
+                            book: book,
+                            shelves: shelves,
+                            onUpdate: { updatedBook in
+                                if let index = books.firstIndex(where: { $0.id == updatedBook.id }) {
+                                    books[index] = updatedBook
+                                } else {
+                                    books.append(updatedBook)
+                                }
+                                Task { await reloadShelvesIfNeeded() }
+                            },
+                            onDelete: { deletedBook in
+                                books.removeAll { $0.id == deletedBook.id }
+                            }
+                        )
+                    } label: {
+                        HStack(spacing: 12) {
+                            BookCoverThumbnailView(coverURL: book.coverURL)
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(book.title)
+                                    .font(.headline)
+                                if let author = book.author, !author.isEmpty {
+                                    Text(author)
+                                        .font(.subheadline)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            .padding(.vertical, 6)
+                        }
+                    }
+                    .swipeActions {
+                        Button("Delete", role: .destructive) {
+                            bookToDelete = book
+                            showDeleteConfirmation = true
+                        }
+                    }
+                }
+            }
+        }
+        .listStyle(.plain)
+        .refreshable {
+            await loadData()
+        }
+        .task {
+            await loadData()
+        }
         .overlay {
             ZStack {
                 if isLoading && books.isEmpty {
@@ -184,7 +234,10 @@ struct ShelfDetailView: View {
 
                     ProgressView("Looking up ISBN…")
                         .padding()
-                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .background(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(.ultraThinMaterial)
+                        )
                         .allowsHitTesting(false)
                 }
             }
