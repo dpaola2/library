@@ -57,16 +57,20 @@ struct ShelfDetailView: View {
                             }
                         )
                     } label: {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(book.title)
-                                .font(.headline)
-                            if let author = book.author, !author.isEmpty {
-                                Text(author)
-                                    .font(.subheadline)
-                                    .foregroundStyle(.secondary)
+                        HStack(spacing: 12) {
+                            BookCoverThumbnailView(coverURL: book.coverURL)
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(book.title)
+                                    .font(.headline)
+                                if let author = book.author, !author.isEmpty {
+                                    Text(author)
+                                        .font(.subheadline)
+                                        .foregroundStyle(.secondary)
+                                }
                             }
+                            .padding(.vertical, 6)
                         }
-                        .padding(.vertical, 6)
                     }
                     .swipeActions {
                         Button("Delete", role: .destructive) {
@@ -219,12 +223,39 @@ struct ShelfDetailView: View {
 
     private func saveScannedBook(title: String, author: String?, shelfId: UUID) async {
         do {
-            _ = try await supabase.createBook(title: title, author: author, shelfId: shelfId)
+            let bookId = UUID()
+            var uploadedCoverURL: URL?
+
+            if let userId = supabase.getCurrentUserId(), let remoteCover = scannedBookData?.coverURL {
+                do {
+                    let remoteImage = try await CoverImageService.shared.downloadRemoteImage(from: remoteCover)
+                    uploadedCoverURL = try await CoverImageService.shared.uploadCover(
+                        image: remoteImage,
+                        bookId: bookId,
+                        userId: userId
+                    )
+                } catch {
+                    await MainActor.run {
+                        errorMessage = "Cover image upload failed. You can add it manually later."
+                        showError = true
+                    }
+                }
+            }
+
+            let _ = try await supabase.createBook(
+                id: bookId,
+                title: title,
+                author: author,
+                shelfId: shelfId,
+                coverURL: uploadedCoverURL
+            )
+
             await MainActor.run {
                 showBookPreview = false
                 scannedBookData = nil
             }
             await loadBooks()
+            await reloadShelvesIfNeeded(force: true)
         } catch {
             await MainActor.run {
                 errorMessage = error.localizedDescription
@@ -267,6 +298,7 @@ struct ShelfDetailView: View {
     @MainActor
     private func deleteBook(_ book: Book) async {
         do {
+            await CoverImageService.shared.deleteCover(for: book)
             try await supabase.deleteBook(id: book.id)
             books.removeAll { $0.id == book.id }
         } catch {

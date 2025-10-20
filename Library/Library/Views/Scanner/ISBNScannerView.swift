@@ -124,7 +124,7 @@ private struct CameraPreview: UIViewControllerRepresentable {
             self.controller = controller
             self.state = state
             self.onISBNFound = onISBNFound
-            request.symbologies = [.ean13, .ean8, .code128, .code39, .code39Checksum, .code93]
+            request.symbologies = [.ean13, .ean8, .code128, .code39]
             controller.setSampleBufferDelegate(self)
         }
 

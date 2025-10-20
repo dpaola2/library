@@ -100,7 +100,7 @@ final class ISBNService {
             default:
                 return nil
             }
-        } catch let error as DecodingError {
+        } catch is DecodingError {
             throw ISBNServiceError.invalidResponse
         } catch {
             throw ISBNServiceError.networkFailure(error)
@@ -159,7 +159,7 @@ final class ISBNService {
                 author: author,
                 coverURL: coverURL
             )
-        } catch let error as DecodingError {
+        } catch is DecodingError {
             throw ISBNServiceError.invalidResponse
         } catch {
             throw ISBNServiceError.networkFailure(error)

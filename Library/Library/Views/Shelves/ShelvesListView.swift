@@ -146,6 +146,10 @@ struct ShelvesListView: View {
     @MainActor
     private func deleteShelf(_ shelf: Shelf) async {
         do {
+            let books = try await supabase.fetchBooks(shelfId: shelf.id)
+            for book in books {
+                await CoverImageService.shared.deleteCover(for: book)
+            }
             try await supabase.deleteShelf(id: shelf.id)
             shelves.removeAll { $0.id == shelf.id }
         } catch {

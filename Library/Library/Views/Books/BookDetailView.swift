@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct BookDetailView: View {
     @StateObject private var supabase = SupabaseService.shared
@@ -11,8 +12,13 @@ struct BookDetailView: View {
     @State private var showEditSheet = false
     @State private var showDeleteConfirmation = false
     @State private var isDeleting = false
+    @State private var isUpdatingCover = false
     @State private var errorMessage: String?
     @State private var showError = false
+    @State private var coverImage: UIImage?
+    @State private var showCoverActions = false
+    @State private var showImagePicker = false
+    @State private var imagePickerSource: ImagePickerView.Source?
 
     let onUpdate: (Book) -> Void
     let onDelete: (Book) -> Void
@@ -32,6 +38,27 @@ struct BookDetailView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 24) {
+                VStack(spacing: 16) {
+                    BookCoverFullView(coverURL: book.coverURL, image: $coverImage)
+
+                    Button {
+                        showCoverActions = true
+                    } label: {
+                        Label(book.coverURL == nil ? "Add Cover" : "Change Cover", systemImage: "photo.on.rectangle")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(isUpdatingCover || isDeleting)
+
+                    if book.coverURL != nil {
+                        Button("Remove Cover", role: .destructive) {
+                            Task { await removeCover() }
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(isUpdatingCover || isDeleting)
+                    }
+                }
+
                 VStack(alignment: .leading, spacing: 12) {
                     Text(book.title)
                         .font(.title2.bold())
@@ -61,7 +88,7 @@ struct BookDetailView: View {
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(isDeleting)
+                    .disabled(isDeleting || isUpdatingCover)
 
                     Button {
                         showEditSheet = true
@@ -70,7 +97,7 @@ struct BookDetailView: View {
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
-                    .disabled(isDeleting)
+                    .disabled(isDeleting || isUpdatingCover)
 
                     Button(role: .destructive) {
                         showDeleteConfirmation = true
@@ -79,7 +106,7 @@ struct BookDetailView: View {
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
-                    .disabled(isDeleting)
+                    .disabled(isDeleting || isUpdatingCover)
                 }
             }
             .padding()
@@ -99,19 +126,46 @@ struct BookDetailView: View {
         .sheet(isPresented: $showEditSheet) {
             EditBookView(book: book, shelves: shelves) { updatedBook in
                 book = updatedBook
+                coverImage = nil
                 onUpdate(updatedBook)
                 Task { await loadShelvesIfNeeded(force: true) }
             }
         }
-        .confirmationDialog(
-            "Delete Book?",
-            isPresented: $showDeleteConfirmation
-        ) {
+        .sheet(isPresented: $showImagePicker) {
+            if let source = imagePickerSource {
+                ImagePickerView(source: source) { image in
+                    Task { await handlePickedImage(image) }
+                } onCancel: {
+                    showImagePicker = false
+                }
+            }
+        }
+        .confirmationDialog("Delete Book?", isPresented: $showDeleteConfirmation) {
             Button("Delete \"\(book.title)\"", role: .destructive) {
                 deleteBook()
             }
+            Button("Cancel", role: .cancel) {}
         } message: {
             Text("Deleting this book cannot be undone.")
+        }
+        .confirmationDialog("Cover Options", isPresented: $showCoverActions) {
+            Button("Choose from Library") {
+                presentPicker(.photoLibrary)
+            }
+
+            if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                Button("Take Photo") {
+                    presentPicker(.camera)
+                }
+            }
+
+            if book.coverURL != nil {
+                Button("Remove Cover", role: .destructive) {
+                    Task { await removeCover() }
+                }
+            }
+
+            Button("Cancel", role: .cancel) {}
         }
         .alert("Error", isPresented: $showError) {
             Button("OK", role: .cancel) {}
@@ -119,8 +173,8 @@ struct BookDetailView: View {
             Text(errorMessage ?? "An unexpected error occurred.")
         }
         .overlay {
-            if isDeleting {
-                ProgressView("Deleting…")
+            if isDeleting || isUpdatingCover {
+                ProgressView(isDeleting ? "Deleting…" : "Updating Cover…")
                     .padding()
                     .background(.ultraThinMaterial)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
@@ -129,10 +183,7 @@ struct BookDetailView: View {
     }
 
     private var currentShelfName: String {
-        if let shelf = shelves.first(where: { $0.id == book.shelfId }) {
-            return shelf.name
-        }
-        return "Unknown Shelf"
+        shelves.first(where: { $0.id == book.shelfId })?.name ?? "Unknown Shelf"
     }
 
     @MainActor
@@ -154,6 +205,7 @@ struct BookDetailView: View {
         isDeleting = true
 
         Task {
+            await CoverImageService.shared.deleteCover(for: book)
             do {
                 try await supabase.deleteBook(id: book.id)
                 await MainActor.run {
@@ -169,6 +221,67 @@ struct BookDetailView: View {
 
             await MainActor.run {
                 isDeleting = false
+            }
+        }
+    }
+
+    private func presentPicker(_ source: ImagePickerView.Source) {
+        imagePickerSource = source
+        showCoverActions = false
+        showImagePicker = true
+    }
+
+    private func handlePickedImage(_ image: UIImage) async {
+        showImagePicker = false
+        isUpdatingCover = true
+        defer { isUpdatingCover = false }
+
+        do {
+            guard let userId = supabase.getCurrentUserId() else {
+                throw CoverImageError.missingUser
+            }
+
+            let uploadedURL = try await CoverImageService.shared.uploadCover(
+                image: image,
+                bookId: book.id,
+                userId: userId
+            )
+
+            try await supabase.updateBookCover(id: book.id, coverURL: uploadedURL)
+
+            await MainActor.run {
+                coverImage = image
+                book.coverURL = uploadedURL
+                onUpdate(book)
+                CoverImageService.shared.clearCache(for: uploadedURL)
+            }
+        } catch {
+            await MainActor.run {
+                errorMessage = error.localizedDescription
+                showError = true
+            }
+        }
+    }
+
+    private func removeCover() async {
+        guard book.coverURL != nil else { return }
+        showCoverActions = false
+        isUpdatingCover = true
+        defer { isUpdatingCover = false }
+
+        await CoverImageService.shared.deleteCover(for: book)
+
+        do {
+            try await supabase.updateBookCover(id: book.id, coverURL: nil)
+            await MainActor.run {
+                coverImage = nil
+                book.coverURL = nil
+                onUpdate(book)
+            }
+        } catch {
+            await MainActor.run {
+                errorMessage = error.localizedDescription
+                showError = true
             }
         }
     }

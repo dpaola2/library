@@ -123,16 +123,24 @@ final class SupabaseService: ObservableObject {
             .value
     }
 
-    func createBook(title: String, author: String?, shelfId: UUID) async throws -> Book {
+    func createBook(
+        id: UUID? = nil,
+        title: String,
+        author: String?,
+        shelfId: UUID,
+        coverURL: URL? = nil
+    ) async throws -> Book {
         guard let userId = getCurrentUserId() else {
             throw SupabaseError.notAuthenticated
         }
 
         let newBook = BookInsert(
+            id: id,
             title: title,
             author: author,
             shelfId: shelfId,
-            userId: userId
+            userId: userId,
+            coverUrl: coverURL?.absoluteString
         )
 
         return try await client
@@ -150,6 +158,16 @@ final class SupabaseService: ObservableObject {
             author: author,
             shelfId: shelfId
         )
+
+        try await client
+            .from("books")
+            .update(update)
+            .eq("id", value: id.uuidString)
+            .execute()
+    }
+
+    func updateBookCover(id: UUID, coverURL: URL?) async throws {
+        let update = BookCoverUpdate(coverUrl: coverURL?.absoluteString)
 
         try await client
             .from("books")
@@ -205,6 +223,7 @@ struct Book: Identifiable, Codable {
     var author: String?
     var shelfId: UUID
     let userId: UUID
+    var coverURL: URL?
     let createdAt: Date
     let updatedAt: Date
 
@@ -214,22 +233,27 @@ struct Book: Identifiable, Codable {
         case author
         case shelfId = "shelf_id"
         case userId = "user_id"
+        case coverURL = "cover_url"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
     }
 }
 
 struct BookInsert: Encodable {
+    let id: UUID?
     let title: String
     let author: String?
     let shelfId: UUID
     let userId: UUID
+    let coverUrl: String?
 
     enum CodingKeys: String, CodingKey {
+        case id
         case title
         case author
         case shelfId = "shelf_id"
         case userId = "user_id"
+        case coverUrl = "cover_url"
     }
 }
 
@@ -242,6 +266,23 @@ struct BookUpdate: Encodable {
         case title
         case author
         case shelfId = "shelf_id"
+    }
+}
+
+private struct BookCoverUpdate: Encodable {
+    let coverUrl: String?
+
+    enum CodingKeys: String, CodingKey {
+        case coverUrl = "cover_url"
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        if let coverUrl {
+            try container.encode(coverUrl, forKey: .coverUrl)
+        } else {
+            try container.encodeNil(forKey: .coverUrl)
+        }
     }
 }
 
