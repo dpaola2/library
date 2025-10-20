@@ -128,7 +128,8 @@ final class SupabaseService: ObservableObject {
         title: String,
         author: String?,
         shelfId: UUID,
-        coverURL: URL? = nil
+        coverURL: URL? = nil,
+        notes: String? = nil
     ) async throws -> Book {
         guard let userId = getCurrentUserId() else {
             throw SupabaseError.notAuthenticated
@@ -140,7 +141,8 @@ final class SupabaseService: ObservableObject {
             author: author,
             shelfId: shelfId,
             userId: userId,
-            coverUrl: coverURL?.absoluteString
+            coverUrl: coverURL?.absoluteString,
+            notes: notes
         )
 
         return try await client
@@ -152,12 +154,29 @@ final class SupabaseService: ObservableObject {
             .value
     }
 
-    func updateBook(id: UUID, title: String, author: String?, shelfId: UUID) async throws {
+    func updateBook(
+        id: UUID,
+        title: String,
+        author: String?,
+        shelfId: UUID,
+        notes: String?
+    ) async throws {
         let update = BookUpdate(
             title: title,
             author: author,
-            shelfId: shelfId
+            shelfId: shelfId,
+            notes: notes
         )
+
+        try await client
+            .from("books")
+            .update(update)
+            .eq("id", value: id.uuidString)
+            .execute()
+    }
+
+    func updateBookNotes(id: UUID, notes: String?) async throws {
+        let update = BookNotesUpdate(notes: notes)
 
         try await client
             .from("books")
@@ -224,6 +243,7 @@ struct Book: Identifiable, Codable {
     var shelfId: UUID
     let userId: UUID
     var coverURL: URL?
+    var notes: String?
     let createdAt: Date
     let updatedAt: Date
 
@@ -234,6 +254,7 @@ struct Book: Identifiable, Codable {
         case shelfId = "shelf_id"
         case userId = "user_id"
         case coverURL = "cover_url"
+        case notes
         case createdAt = "created_at"
         case updatedAt = "updated_at"
     }
@@ -246,6 +267,7 @@ struct BookInsert: Encodable {
     let shelfId: UUID
     let userId: UUID
     let coverUrl: String?
+    let notes: String?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -254,6 +276,7 @@ struct BookInsert: Encodable {
         case shelfId = "shelf_id"
         case userId = "user_id"
         case coverUrl = "cover_url"
+        case notes
     }
 }
 
@@ -261,11 +284,46 @@ struct BookUpdate: Encodable {
     let title: String
     let author: String?
     let shelfId: UUID
+    let notes: String?
 
     enum CodingKeys: String, CodingKey {
         case title
         case author
         case shelfId = "shelf_id"
+        case notes
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(title, forKey: .title)
+        if let author {
+            try container.encode(author, forKey: .author)
+        } else {
+            try container.encodeNil(forKey: .author)
+        }
+        try container.encode(shelfId, forKey: .shelfId)
+        if let notes {
+            try container.encode(notes, forKey: .notes)
+        } else {
+            try container.encodeNil(forKey: .notes)
+        }
+    }
+}
+
+private struct BookNotesUpdate: Encodable {
+    let notes: String?
+
+    enum CodingKeys: String, CodingKey {
+        case notes
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        if let notes {
+            try container.encode(notes, forKey: .notes)
+        } else {
+            try container.encodeNil(forKey: .notes)
+        }
     }
 }
 

@@ -6,6 +6,7 @@ struct AddBookView: View {
 
     @State private var title = ""
     @State private var author = ""
+    @State private var notes = ""
     @State private var selectedShelfId: UUID?
     @State private var shelfOptions: [Shelf]
     @State private var isSaving = false
@@ -59,6 +60,18 @@ struct AddBookView: View {
                         }
                         .disabled(isSaving)
                     }
+                }
+
+                Section {
+                    TextEditor(text: $notes)
+                        .frame(minHeight: 120)
+                        .disabled(isSaving)
+                        .textInputAutocapitalization(.sentences)
+                        .autocorrectionDisabled(false)
+                } header: {
+                    Text("Notes (optional)")
+                } footer: {
+                    Text("Add any thoughts, quotes, or reminders about this book.")
                 }
             }
             .navigationTitle("Add Book")
@@ -114,6 +127,7 @@ struct AddBookView: View {
         guard let shelfId = selectedShelfId else { return }
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedAuthor = author.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedNotes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
 
         isSaving = true
         errorMessage = nil
@@ -123,7 +137,8 @@ struct AddBookView: View {
                 _ = try await supabase.createBook(
                     title: trimmedTitle,
                     author: trimmedAuthor.isEmpty ? nil : trimmedAuthor,
-                    shelfId: shelfId
+                    shelfId: shelfId,
+                    notes: trimmedNotes.isEmpty ? nil : trimmedNotes
                 )
                 await MainActor.run {
                     onSave()
