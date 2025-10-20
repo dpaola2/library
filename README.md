@@ -1,5 +1,3 @@
-# Book Shelves App - Product & Technical Specification
-
 ## Overview
 A simple iOS app for organizing books into shelves, using Supabase as the backend and SwiftUI for the interface.
 
