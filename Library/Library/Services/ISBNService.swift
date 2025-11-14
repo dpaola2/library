@@ -8,6 +8,16 @@ struct BookLookupResult: Identifiable, Equatable {
     let coverURL: URL?
 }
 
+struct BookSearchResult: Identifiable, Equatable {
+    let id: String
+    let title: String
+    let authors: [String]
+    let isbn: String?
+    let coverImageURL: String?
+    let publishYear: Int?
+    let publisher: String?
+}
+
 enum ISBNServiceError: LocalizedError {
     case invalidISBN
     case notFound
@@ -53,6 +63,33 @@ final class ISBNService {
         }
 
         throw ISBNServiceError.notFound
+    }
+
+    func searchBooks(title rawTitle: String, author rawAuthor: String? = nil) async throws -> [BookSearchResult] {
+        let title = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        let author = rawAuthor?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !title.isEmpty else { return [] }
+
+        var openLibraryError: Error?
+
+        do {
+            let openLibraryResults = try await searchOpenLibrary(title: title, author: author)
+            if !openLibraryResults.isEmpty {
+                return openLibraryResults
+            }
+        } catch {
+            openLibraryError = error
+        }
+
+        do {
+            return try await searchGoogleBooks(title: title, author: author)
+        } catch {
+            if let openLibraryError {
+                throw openLibraryError
+            }
+            throw error
+        }
     }
 
     private func normalizeISBN(_ isbn: String) -> String? {
@@ -165,6 +202,124 @@ final class ISBNService {
             throw ISBNServiceError.networkFailure(error)
         }
     }
+
+    private func searchOpenLibrary(title: String, author: String?) async throws -> [BookSearchResult] {
+        var components = URLComponents(string: "https://openlibrary.org/search.json")
+        var items = [URLQueryItem(name: "title", value: title)]
+
+        if let author, !author.isEmpty {
+            items.append(URLQueryItem(name: "author", value: author))
+        }
+
+        items.append(URLQueryItem(name: "limit", value: "20"))
+        components?.queryItems = items
+
+        guard let url = components?.url else {
+            throw ISBNServiceError.invalidResponse
+        }
+
+        do {
+            let (data, response) = try await session.data(from: url)
+
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+                throw ISBNServiceError.invalidResponse
+            }
+
+            let decoder = JSONDecoder()
+            decoder.keyDecodingStrategy = .convertFromSnakeCase
+            let decoded = try decoder.decode(OpenLibrarySearchResponse.self, from: data)
+
+            return decoded.docs.compactMap { doc in
+                guard let title = doc.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty else {
+                    return nil
+                }
+
+                let authors = doc.authorName ?? []
+                let isbn = doc.isbn?.first
+                let publishYear = doc.firstPublishYear
+                let publisher = doc.publisher?.first
+                let coverURL = doc.coverI.map { "https://covers.openlibrary.org/b/id/\($0)-M.jpg" }
+
+                let identifier = isbn ?? [title, authors.first, publisher]
+                    .compactMap { $0 }
+                    .joined(separator: "|")
+
+                return BookSearchResult(
+                    id: identifier.isEmpty ? UUID().uuidString : identifier,
+                    title: title,
+                    authors: authors,
+                    isbn: isbn,
+                    coverImageURL: coverURL,
+                    publishYear: publishYear,
+                    publisher: publisher
+                )
+            }
+        } catch is DecodingError {
+            throw ISBNServiceError.invalidResponse
+        } catch {
+            throw ISBNServiceError.networkFailure(error)
+        }
+    }
+
+    private func searchGoogleBooks(title: String, author: String?) async throws -> [BookSearchResult] {
+        var components = URLComponents(string: "https://www.googleapis.com/books/v1/volumes")
+        var query = "intitle:\(title)"
+        if let author, !author.isEmpty {
+            query += "+inauthor:\(author)"
+        }
+
+        components?.queryItems = [
+            URLQueryItem(name: "q", value: query),
+            URLQueryItem(name: "maxResults", value: "20")
+        ]
+
+        guard let url = components?.url else {
+            throw ISBNServiceError.invalidResponse
+        }
+
+        do {
+            let (data, response) = try await session.data(from: url)
+
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+                throw ISBNServiceError.invalidResponse
+            }
+
+            let decoded = try JSONDecoder().decode(GoogleBooksResponse.self, from: data)
+            let items = decoded.items ?? []
+
+            return items.compactMap { item in
+                guard let title = item.volumeInfo.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty else {
+                    return nil
+                }
+
+                let authors = item.volumeInfo.authors ?? []
+                let publisher = item.volumeInfo.publisher
+                let publishYear = item.volumeInfo.publishedDate?
+                    .prefix(4)
+                    .flatMap { Int($0) }
+                let isbn = item.volumeInfo.industryIdentifiers?
+                    .first(where: { ($0.type?.contains("ISBN") ?? false) && ($0.identifier?.isEmpty == false) })?
+                    .identifier
+
+                let coverURL = item.volumeInfo.imageLinks?.preferredURL?.absoluteString
+                let identifier = isbn ?? item.id ?? UUID().uuidString
+
+                return BookSearchResult(
+                    id: identifier,
+                    title: title,
+                    authors: authors,
+                    isbn: isbn,
+                    coverImageURL: coverURL,
+                    publishYear: publishYear,
+                    publisher: publisher
+                )
+            }
+        } catch is DecodingError {
+            throw ISBNServiceError.invalidResponse
+        } catch {
+            throw ISBNServiceError.networkFailure(error)
+        }
+    }
 }
 
 // MARK: - Open Library Models
@@ -197,6 +352,7 @@ private struct GoogleBooksResponse: Decodable {
 }
 
 private struct GoogleBookItem: Decodable {
+    let id: String?
     let volumeInfo: GoogleVolumeInfo
 }
 
@@ -204,6 +360,9 @@ private struct GoogleVolumeInfo: Decodable {
     let title: String?
     let authors: [String]?
     let imageLinks: GoogleImageLinks?
+    let publishedDate: String?
+    let publisher: String?
+    let industryIdentifiers: [GoogleIndustryIdentifier]?
 }
 
 private struct GoogleImageLinks: Decodable {
@@ -216,4 +375,22 @@ private struct GoogleImageLinks: Decodable {
         }
         return nil
     }
+}
+
+private struct GoogleIndustryIdentifier: Decodable {
+    let type: String?
+    let identifier: String?
+}
+
+private struct OpenLibrarySearchResponse: Decodable {
+    let docs: [OpenLibrarySearchDoc]
+}
+
+private struct OpenLibrarySearchDoc: Decodable {
+    let title: String?
+    let authorName: [String]?
+    let isbn: [String]?
+    let coverI: Int?
+    let firstPublishYear: Int?
+    let publisher: [String]?
 }

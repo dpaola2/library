@@ -15,6 +15,7 @@ struct ShelfDetailView: View {
     @State private var showError = false
     @State private var showScanner = false
     @State private var showBookPreview = false
+    @State private var showBookSearch = false
     @State private var scannedBookData: BookLookupResult?
     @State private var isLookingUpISBN = false
     @State private var isFABExpanded = false
@@ -57,6 +58,9 @@ struct ShelfDetailView: View {
                         },
                         onAddBook: {
                             showAddBook = true
+                        },
+                        onSearchBook: {
+                            showBookSearch = true
                         }
                     )
                 }
@@ -70,6 +74,15 @@ struct ShelfDetailView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
+                    Button {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                            isFABExpanded = false
+                        }
+                        showBookSearch = true
+                    } label: {
+                        Label("Search for Book", systemImage: "magnifyingglass")
+                    }
+
                     Button {
                         withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
                             isFABExpanded = false
@@ -114,6 +127,11 @@ struct ShelfDetailView: View {
                 shelf.name = newName
                 onShelfUpdated?(newName)
                 Task { await loadData() }
+            }
+        }
+        .sheet(isPresented: $showBookSearch) {
+            BookSearchView(defaultShelfId: shelf.id) {
+                await loadData()
             }
         }
         .sheet(isPresented: $showScanner) {

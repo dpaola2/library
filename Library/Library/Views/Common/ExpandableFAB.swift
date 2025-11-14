@@ -4,12 +4,21 @@ struct ExpandableFAB: View {
     @Binding var isExpanded: Bool
     let onScanISBN: () -> Void
     let onAddBook: () -> Void
+    let onSearchBook: () -> Void
 
     private let animation = Animation.spring(response: 0.3, dampingFraction: 0.7)
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 16) {
             if isExpanded {
+                FABOption(
+                    icon: "magnifyingglass",
+                    label: "Search for Book",
+                    color: .purple,
+                    action: performSearch
+                )
+                .transition(optionTransition)
+
                 FABOption(
                     icon: "barcode.viewfinder",
                     label: "Scan ISBN",
@@ -63,6 +72,13 @@ struct ExpandableFAB: View {
         }
         onAddBook()
     }
+
+    private func performSearch() {
+        withAnimation(animation) {
+            isExpanded = false
+        }
+        onSearchBook()
+    }
 }
 
 private struct FABOption: View {
@@ -96,7 +112,8 @@ struct ExpandableFAB_Previews: PreviewProvider {
         ExpandableFAB(
             isExpanded: .constant(true),
             onScanISBN: {},
-            onAddBook: {}
+            onAddBook: {},
+            onSearchBook: {}
         )
         .preferredColorScheme(.light)
         .previewLayout(.sizeThatFits)
