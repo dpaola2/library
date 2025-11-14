@@ -6,6 +6,7 @@ struct EditBookView: View {
 
     @State private var title: String
     @State private var author: String
+    @State private var notes: String
     @State private var selectedShelfId: UUID
     @State private var shelfOptions: [Shelf]
     @State private var isSaving = false
@@ -24,6 +25,7 @@ struct EditBookView: View {
         self.originalBook = book
         self._title = State(initialValue: book.title)
         self._author = State(initialValue: book.author ?? "")
+        self._notes = State(initialValue: book.notes ?? "")
         self._selectedShelfId = State(initialValue: book.shelfId)
         self._shelfOptions = State(initialValue: shelves)
         self.onUpdate = onUpdate
@@ -63,6 +65,18 @@ struct EditBookView: View {
                         }
                         .disabled(isSaving)
                     }
+                }
+
+                Section {
+                    TextEditor(text: $notes)
+                        .frame(minHeight: 120)
+                        .disabled(isSaving)
+                        .textInputAutocapitalization(.sentences)
+                        .autocorrectionDisabled(false)
+                } header: {
+                    Text("Notes")
+                } footer: {
+                    Text("Add any thoughts, quotes, or reminders about this book.")
                 }
             }
             .navigationTitle("Edit Book")
@@ -118,6 +132,7 @@ struct EditBookView: View {
     private func updateBook() {
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedAuthor = author.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedNotes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
 
         isSaving = true
         errorMessage = nil
@@ -128,12 +143,14 @@ struct EditBookView: View {
                     id: originalBook.id,
                     title: trimmedTitle,
                     author: trimmedAuthor.isEmpty ? nil : trimmedAuthor,
-                    shelfId: selectedShelfId
+                    shelfId: selectedShelfId,
+                    notes: trimmedNotes.isEmpty ? nil : trimmedNotes
                 )
                 var updatedBook = originalBook
                 updatedBook.title = trimmedTitle
                 updatedBook.author = trimmedAuthor.isEmpty ? nil : trimmedAuthor
                 updatedBook.shelfId = selectedShelfId
+                updatedBook.notes = trimmedNotes.isEmpty ? nil : trimmedNotes
 
                 await MainActor.run {
                     onUpdate(updatedBook)

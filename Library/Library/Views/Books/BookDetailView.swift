@@ -19,6 +19,9 @@ struct BookDetailView: View {
     @State private var showCoverActions = false
     @State private var showImagePicker = false
     @State private var imagePickerSource: ImagePickerView.Source?
+    @State private var isEditingNotes = false
+    @State private var editableNotes = ""
+    @State private var saveTask: Task<Void, Never>?
 
     let onUpdate: (Book) -> Void
     let onDelete: (Book) -> Void
@@ -31,6 +34,7 @@ struct BookDetailView: View {
     ) {
         self._book = State(initialValue: book)
         self._shelves = State(initialValue: shelves)
+        self._editableNotes = State(initialValue: book.notes ?? "")
         self.onUpdate = onUpdate
         self.onDelete = onDelete
     }
@@ -80,6 +84,8 @@ struct BookDetailView: View {
                         .fill(Color(.secondarySystemBackground))
                 )
 
+                notesSection
+
                 VStack(spacing: 12) {
                     Button {
                         showMoveSheet = true
@@ -127,6 +133,7 @@ struct BookDetailView: View {
             EditBookView(book: book, shelves: shelves) { updatedBook in
                 book = updatedBook
                 coverImage = nil
+                editableNotes = updatedBook.notes ?? ""
                 onUpdate(updatedBook)
                 Task { await loadShelvesIfNeeded(force: true) }
             }
@@ -180,10 +187,91 @@ struct BookDetailView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 12))
             }
         }
+        .onDisappear {
+            saveTask?.cancel()
+        }
+        .onChange(of: book.notes) { newValue in
+            if !isEditingNotes {
+                editableNotes = newValue ?? ""
+            }
+        }
     }
 
     private var currentShelfName: String {
         shelves.first(where: { $0.id == book.shelfId })?.name ?? "Unknown Shelf"
+    }
+
+    private var notesSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Notes")
+                .font(.headline)
+
+            if isEditingNotes {
+                TextEditor(text: $editableNotes)
+                    .frame(minHeight: 160)
+                    .padding(8)
+                    .background(Color(.secondarySystemBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(Color.accentColor, lineWidth: 2)
+                    )
+                    .textInputAutocapitalization(.sentences)
+                    .autocorrectionDisabled(false)
+                    .onChange(of: editableNotes) { newValue in
+                        saveTask?.cancel()
+                        saveTask = Task {
+                            try? await Task.sleep(nanoseconds: 1_000_000_000)
+                            if Task.isCancelled { return }
+                            await saveNotes(newValue)
+                        }
+                    }
+
+                Button("Done") {
+                    saveTask?.cancel()
+                    isEditingNotes = false
+                    let finalValue = editableNotes
+                    Task { await saveNotes(finalValue) }
+                }
+                .buttonStyle(.borderedProminent)
+            } else {
+                if let notes = book.notes, !notes.isEmpty {
+                    Button {
+                        startEditingNotes()
+                    } label: {
+                        Text(notes)
+                            .foregroundStyle(.primary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(12)
+                            .background(Color(.secondarySystemBackground))
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    Button {
+                        startEditingNotes()
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "note.text.badge.plus")
+                                .foregroundStyle(.secondary)
+                            Text("Add notes")
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .padding(12)
+                        .background(Color(.secondarySystemBackground))
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .padding()
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color(.tertiarySystemBackground))
+        )
     }
 
     @MainActor
@@ -283,6 +371,25 @@ struct BookDetailView: View {
                 errorMessage = error.localizedDescription
                 showError = true
             }
+        }
+    }
+
+    private func startEditingNotes() {
+        editableNotes = book.notes ?? ""
+        isEditingNotes = true
+    }
+
+    @MainActor
+    private func saveNotes(_ notes: String) async {
+        let trimmedNotes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
+        let notesToSave = trimmedNotes.isEmpty ? nil : trimmedNotes
+
+        do {
+            try await supabase.updateBookNotes(id: book.id, notes: notesToSave)
+            book.notes = notesToSave
+            onUpdate(book)
+        } catch {
+            print("Error saving notes: \(error)")
         }
     }
 }

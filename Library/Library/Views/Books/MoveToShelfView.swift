@@ -80,7 +80,8 @@ struct MoveToShelfView: View {
                     id: book.id,
                     title: book.title,
                     author: book.author,
-                    shelfId: selectedShelfId
+                    shelfId: selectedShelfId,
+                    notes: book.notes
                 )
                 await MainActor.run {
                     onMove(selectedShelfId)
